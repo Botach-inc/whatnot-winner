@@ -44,7 +44,7 @@ const COLORS = [
 
 const W = 1080;
 const H = 1920;
-const DURATION = 10000;
+// Duration/fade are set dynamically from URL params in the component
 
 interface Particle {
   x: number; y: number;
@@ -98,10 +98,16 @@ export default function WinnerPage() {
   const flashRef = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
   const trumpWrapRef = useRef<HTMLDivElement>(null);
-  const overlayRef = useRef<HTMLDivElement>(null);
-  const launchRef = useRef<((withAudio: boolean) => void) | null>(null);
+  const launchRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
+    // URL params for dynamic config (no redeploy needed):
+    //   ?fade=15    → start fading visuals at 15s (default: 16, video is ~19s)
+    //   ?duration=19 → total visual duration in seconds (default: 19)
+    const params = new URLSearchParams(window.location.search);
+    const DURATION = (parseFloat(params.get('duration') || '19')) * 1000;
+    const FADE_AT = (parseFloat(params.get('fade') || '16')) * 1000;
+
     const fxCanvas = fxCanvasRef.current!;
     const trumpCanvas = trumpCanvasRef.current!;
     const video = videoRef.current!;
@@ -225,46 +231,19 @@ export default function WinnerPage() {
       c.closePath();
     }
 
-    // ─── Synth boom ───
-    function playSynthBoom() {
-      try {
-        const ac = new AudioContext();
-        const boom = ac.createOscillator();
-        const bg = ac.createGain();
-        boom.type = 'sine';
-        boom.frequency.setValueAtTime(80, ac.currentTime);
-        boom.frequency.exponentialRampToValueAtTime(30, ac.currentTime + 0.5);
-        bg.gain.setValueAtTime(0.6, ac.currentTime);
-        bg.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.8);
-        boom.connect(bg).connect(ac.destination);
-        boom.start(); boom.stop(ac.currentTime + 0.8);
-
-        const buf = ac.createBuffer(1, ac.sampleRate * 0.5, ac.sampleRate);
-        const d = buf.getChannelData(0);
-        for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ac.sampleRate * 0.1));
-        const noise = ac.createBufferSource();
-        const ng = ac.createGain();
-        noise.buffer = buf;
-        ng.gain.setValueAtTime(0.3, ac.currentTime);
-        ng.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.5);
-        noise.connect(ng).connect(ac.destination);
-        noise.start();
-      } catch {}
-    }
-
     // ─── Animation ───
     function animate(timestamp: number) {
       if (!startTime) startTime = timestamp;
       const elapsed = timestamp - startTime;
 
       if (elapsed > DURATION) {
+        // Clear visuals but let video audio play to completion
         ctx.clearRect(0, 0, W, H);
         winnerText.style.opacity = '0';
         winnerText.style.transform = 'scale(0)';
         trumpWrap.style.opacity = '0';
         trumpWrap.style.transform = 'translateX(-50%) scale(0)';
         gl.clear(gl.COLOR_BUFFER_BIT);
-        video.pause();
         return;
       }
 
@@ -363,10 +342,10 @@ export default function WinnerPage() {
         trumpWrap.style.transform = `translateX(-50%) scale(${ease})`;
       }
 
-      // Fade out
-      const fadeStart = DURATION - 2000;
-      if (elapsed >= fadeStart) {
-        const alpha = 1 - (elapsed - fadeStart) / 2000;
+      // Fade out visuals starting at FADE_AT (configurable via ?fade= param)
+      if (elapsed >= FADE_AT) {
+        const fadeDuration = DURATION - FADE_AT;
+        const alpha = 1 - (elapsed - FADE_AT) / fadeDuration;
         winnerText.style.opacity = String(Math.max(alpha, 0));
         trumpWrap.style.opacity = String(Math.max(alpha, 0));
       }
@@ -375,14 +354,10 @@ export default function WinnerPage() {
     }
 
     // ─── Launch ───
-    function launch(withAudio: boolean) {
+    function launch() {
       startTime = 0;
       particles = [];
       trumpPlaying = false;
-
-      // Hide click overlay if present
-      const overlay = document.getElementById('click-overlay');
-      if (overlay) overlay.remove();
 
       // Flash
       flash.style.transition = 'none';
@@ -397,34 +372,22 @@ export default function WinnerPage() {
       setTimeout(spawnSides, 150);
       setTimeout(spawnTop, 300);
 
-      // Play video. In browser: withAudio=true (user clicked, gesture satisfies policy).
-      // In OBS (?auto=1): try unmuted first (OBS bypasses autoplay policy), fallback to muted.
-      video.muted = !withAudio;
+      // Play video — try unmuted first (works in OBS which bypasses autoplay policy).
+      // Falls back to muted if browser blocks it.
+      video.muted = false;
       video.currentTime = 0;
       video.play().then(() => {
         trumpPlaying = true;
       }).catch(() => {
-        // Browser blocked unmuted autoplay — retry muted (visual only)
         video.muted = true;
         video.play().then(() => { trumpPlaying = true; }).catch(() => {});
       });
 
-      if (withAudio) playSynthBoom();
       requestAnimationFrame(animate);
     }
 
-    // Store launch in ref so JSX click handler can call it
     launchRef.current = launch;
-
-    // ?auto=1 → OBS mode. OBS Browser Sources bypass autoplay policy,
-    // so we launch with audio enabled. If it fails (e.g. testing in browser),
-    // the fallback in launch() retries muted.
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('auto') === '1') {
-      if (overlayRef.current) overlayRef.current.style.display = 'none';
-      setTimeout(() => launch(true), 100);
-    }
-    // Otherwise: user clicks the overlay in JSX → launch(true) with full audio
+    setTimeout(launch, 100);
   }, []);
 
   return (
@@ -477,28 +440,8 @@ export default function WinnerPage() {
       </div>
 
       {/* Hidden video element */}
-      <video ref={videoRef} src="/trump-greenscreen.mp4" muted playsInline preload="auto"
+      <video ref={videoRef} src="/trump-greenscreen.mp4" playsInline preload="auto"
         style={{ display: 'none' }} />
-
-      {/* Click-to-start overlay (browser mode only, hidden in OBS via ?auto=1) */}
-      <div ref={overlayRef} id="click-overlay" onClick={() => {
-        if (launchRef.current) {
-          launchRef.current(true);
-          overlayRef.current!.style.display = 'none';
-        }
-      }} style={{
-        position: 'absolute', top: 0, left: 0, width: W, height: H, zIndex: 100,
-        display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
-        background: 'rgba(0,0,0,0.8)',
-      }}>
-        <div style={{ textAlign: 'center', fontFamily: "'Arial Black', Impact, sans-serif" }}>
-          <div style={{
-            fontSize: 80, color: '#FFD700',
-            textShadow: '0 0 30px rgba(255,215,0,0.6)',
-          }}>CLICK</div>
-          <div style={{ fontSize: 36, color: 'white', marginTop: 10 }}>to trigger explosion</div>
-        </div>
-      </div>
     </div>
   );
 }
