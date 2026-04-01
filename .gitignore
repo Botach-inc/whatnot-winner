@@ -1,0 +1,7 @@
+node_modules
+.next
+.claude
+frame_*.png
+test_alpha.png
+trump-keyed*.webm
+trump-greenscreen.mp4
