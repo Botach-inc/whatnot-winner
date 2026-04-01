@@ -372,15 +372,26 @@ export default function WinnerPage() {
       setTimeout(spawnSides, 150);
       setTimeout(spawnTop, 300);
 
-      // Play video — try unmuted first (works in OBS which bypasses autoplay policy).
-      // Falls back to muted if browser blocks it.
+      // Try unmuted first — works in OBS (bypasses autoplay policy).
+      // In regular Chrome, this fails so we fallback to muted + unmute on first click.
       video.muted = false;
       video.currentTime = 0;
       video.play().then(() => {
         trumpPlaying = true;
       }).catch(() => {
+        // Chrome blocked unmuted autoplay — start muted, unmute on first user interaction
         video.muted = true;
-        video.play().then(() => { trumpPlaying = true; }).catch(() => {});
+        video.play().then(() => {
+          trumpPlaying = true;
+          // Listen for ANY click/tap on page to unmute (no overlay needed)
+          const unmute = () => {
+            video.muted = false;
+            document.removeEventListener('click', unmute);
+            document.removeEventListener('touchstart', unmute);
+          };
+          document.addEventListener('click', unmute, { once: true });
+          document.addEventListener('touchstart', unmute, { once: true });
+        }).catch(() => {});
       });
 
       requestAnimationFrame(animate);
