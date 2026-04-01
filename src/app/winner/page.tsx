@@ -102,11 +102,15 @@ export default function WinnerPage() {
 
   useEffect(() => {
     // URL params for dynamic config (no redeploy needed):
-    //   ?fade=15    → start fading visuals at 15s (default: 16, video is ~19s)
-    //   ?duration=19 → total visual duration in seconds (default: 19)
+    //   ?duration=20  → total visual duration in seconds (default: full video length)
+    //   ?fade=17      → start fading at this second (default: video length - 3s)
+    // When neither is specified the overlay plays the whole video and fades in the last 3 s.
     const params = new URLSearchParams(window.location.search);
-    const DURATION = (parseFloat(params.get('duration') || '19')) * 1000;
-    const FADE_AT = (parseFloat(params.get('fade') || '16')) * 1000;
+    const durationParam = params.get('duration');
+    const fadeParam = params.get('fade');
+    // These will be resolved once we know video.duration (see launchWhenReady below)
+    let DURATION = 0;
+    let FADE_AT = 0;
 
     const fxCanvas = fxCanvasRef.current!;
     const trumpCanvas = trumpCanvasRef.current!;
@@ -398,7 +402,21 @@ export default function WinnerPage() {
     }
 
     launchRef.current = launch;
-    setTimeout(launch, 100);
+
+    // Resolve timing — wait for video metadata so we know the real duration
+    function launchWhenReady() {
+      const vidDuration = video.duration; // in seconds (NaN until metadata loads)
+      DURATION = durationParam ? parseFloat(durationParam) * 1000 : vidDuration * 1000;
+      FADE_AT   = fadeParam    ? parseFloat(fadeParam)    * 1000 : (vidDuration - 3) * 1000;
+      setTimeout(launch, 100);
+    }
+
+    if (video.readyState >= 1) {
+      // Metadata already available (e.g. cached)
+      launchWhenReady();
+    } else {
+      video.addEventListener('loadedmetadata', launchWhenReady, { once: true });
+    }
   }, []);
 
   return (
